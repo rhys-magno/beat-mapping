@@ -9,6 +9,43 @@ def load_audio(path: str, sr: int = 22050) -> tuple[np.ndarray, int]:
     return y, actual_sr
 
 
+def _low_band_flux(
+    y: np.ndarray,
+    sr: int,
+    hop_length: int,
+    fmin: float = 40.0,
+    fmax: float = 200.0,
+) -> np.ndarray:
+    """Half-wave rectified spectral flux restricted to kick-drum frequency band (40-200Hz).
+
+    Useful for analysis and future ML feature extraction. Not used in the main
+    pipeline because in hardstyle, kick and bass synths share this frequency range,
+    causing false positives in dense breakdown sections.
+    """
+    n_fft = 2048
+    S = np.abs(librosa.stft(y, n_fft=n_fft, hop_length=hop_length))
+    freqs = librosa.fft_frequencies(sr=sr, n_fft=n_fft)
+    band_mask = (freqs >= fmin) & (freqs <= fmax)
+    # L1 positive-only spectral difference — half-wave rectified per audio-dsp rules
+    flux = np.maximum(0.0, np.diff(S[band_mask], axis=1)).sum(axis=0)
+    # Prepend zero to preserve frame alignment after np.diff reduces length by 1
+    flux = np.concatenate([[0.0], flux])
+    return flux / flux.max() if flux.max() > 0.0 else flux
+
+
+def _kick_band_strength(y: np.ndarray, sr: int, hop_length: int, cutoff_hz: float = 250.0) -> np.ndarray:
+    """onset_strength on LP-filtered audio (kick band only).
+
+    Available for future use. Not used in the main pipeline because in hardstyle,
+    bass synths (40-150Hz) are indistinguishable from kicks by frequency alone —
+    LP filtering over-detects in dense sections.
+    """
+    from scipy.signal import butter, filtfilt
+    b, a = butter(4, cutoff_hz / (sr / 2.0), "low")
+    y_kick = filtfilt(b, a, y).astype(np.float32)
+    return librosa.onset.onset_strength(y=y_kick, sr=sr, hop_length=hop_length)
+
+
 def _interpolate_frame(frame: int, envelope: np.ndarray, hop_length: int, sr: int) -> float:
     fi = int(frame)
     if 0 < fi < len(envelope) - 1:
@@ -27,7 +64,6 @@ def detect_beats(y: np.ndarray, sr: int, hop_length: int = 512) -> list[float]:
     np.random.seed(42)
 
     # 128-base hop gives 5.8ms frames at 22050Hz — sufficient for <5ms target
-    # without requiring symmetric parabola peaks (sharp transients have zero pre-frame energy).
     hop_length = 128 * sr // 22050
 
     # Beat tracking — global tempo reference
@@ -45,7 +81,6 @@ def detect_beats(y: np.ndarray, sr: int, hop_length: int = 512) -> list[float]:
     # ensuring the interpolation corrects the integer-frame quantisation error.
     envelope = librosa.onset.onset_strength(y=y, sr=sr, hop_length=hop_length)
 
-    # Onset detection on onset_strength envelope
     onset_frames = librosa.onset.onset_detect(
         onset_envelope=envelope,
         sr=sr,
