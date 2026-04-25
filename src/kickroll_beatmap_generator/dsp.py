@@ -54,9 +54,9 @@ def detect_beats(y: np.ndarray, sr: int, hop_length: int = 512) -> list[float]:
         pre_max=4,
         post_max=4,
         pre_avg=3,
-        post_avg=5,
-        delta=0.05,
-        wait=8,
+        post_avg=2,
+        delta=0.025,
+        wait=4,
         units="frames",
     )
 
