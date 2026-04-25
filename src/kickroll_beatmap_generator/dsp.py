@@ -26,7 +26,9 @@ def _interpolate_frame(frame: int, envelope: np.ndarray, hop_length: int, sr: in
 def detect_beats(y: np.ndarray, sr: int, hop_length: int = 512) -> list[float]:
     np.random.seed(42)
 
-    hop_length = 512 * sr // 22050
+    # 128-base hop gives 5.8ms frames at 22050Hz — sufficient for <5ms target
+    # without requiring symmetric parabola peaks (sharp transients have zero pre-frame energy).
+    hop_length = 128 * sr // 22050
 
     # Beat tracking — global tempo reference
     tempo_arr, beat_frames = librosa.beat.beat_track(
@@ -38,30 +40,27 @@ def detect_beats(y: np.ndarray, sr: int, hop_length: int = 512) -> list[float]:
         units="frames",
     )
 
-    # Spectral flux onset envelope (half-wave rectified, L1)
-    n_fft = 2048
-    stft = np.abs(librosa.stft(y, n_fft=n_fft, hop_length=hop_length))
-    flux = np.maximum(0.0, np.diff(stft, axis=1)).sum(axis=0)
-    envelope = np.concatenate([[0.0], flux])
-    peak = envelope.max()
-    envelope = envelope / peak if peak > 0 else envelope
+    # Use librosa's onset_strength as the canonical envelope — same envelope
+    # used for both onset_detect peak-picking and parabolic interpolation,
+    # ensuring the interpolation corrects the integer-frame quantisation error.
+    envelope = librosa.onset.onset_strength(y=y, sr=sr, hop_length=hop_length)
 
-    # Onset detection on spectral flux envelope
+    # Onset detection on onset_strength envelope
     onset_frames = librosa.onset.onset_detect(
         onset_envelope=envelope,
         sr=sr,
         hop_length=hop_length,
-        backtrack=True,
-        pre_max=3,
-        post_max=3,
+        backtrack=False,
+        pre_max=4,
+        post_max=4,
         pre_avg=3,
         post_avg=5,
-        delta=0.07,
+        delta=0.05,
         wait=8,
         units="frames",
     )
 
-    # Sub-frame interpolation on both sources
+    # Sub-frame interpolation on both sources using the same envelope
     onset_times = [_interpolate_frame(f, envelope, hop_length, sr) for f in onset_frames]
     beat_times = [_interpolate_frame(f, envelope, hop_length, sr) for f in beat_frames]
 
