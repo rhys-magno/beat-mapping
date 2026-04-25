@@ -55,7 +55,7 @@ def main(audio_file: str, section: tuple, output: str | None, sr: int) -> None:
             "config": {
                 "audio_path": audio_file,
                 "sr": actual_sr,
-                "hop_length": 512 * actual_sr // 22050,
+                "hop_length": 128 * actual_sr // 22050,
                 "sections": sections,
                 "seed": 42,
             },
